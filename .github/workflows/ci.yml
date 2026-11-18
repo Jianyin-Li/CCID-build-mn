@@ -40,11 +40,14 @@ jobs:
             -e V="$V" -e ARCH="${{ matrix.arch }}" \
             -v "$PWD/out:/out" \
             debian:trixie bash -euxo pipefail -c '
+              echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list
+              echo "deb-src http://deb.debian.org/debian trixie main" >> /etc/apt/sources.list
+
               apt-get update
               apt-get install -y --no-install-recommends \
-                build-essential debhelper meson ninja-build pkg-config \
-                libusb-1.0-0-dev zlib1g-dev libpcsclite-dev flex perl \
-                devscripts gnupg ca-certificates curl
+                build-essential dpkg-dev debhelper meson ninja-build \
+                devscripts ca-certificates curl
+
               mkdir -p /work && cd /work
 
               base=http://deb.debian.org/debian/pool/main/c/ccid
@@ -58,14 +61,19 @@ jobs:
                 echo "==> fetching ${base}/${f}"
                 curl -fsSLO "${base}/${f}" || { echo "download failed: ${f}"; exit 1; }
               done
-              ls -l
 
               dpkg-source -x "ccid_${V}.dsc"
-
               cd "ccid-${up}"
+
               export DEBEMAIL="repo@sparkorg.org" DEBFULLNAME="Spark ORG"
               dch --local "~spark1" -D trixie \
-                "Rebuild for Spark ORG trixie; libccid 1.8.4 adds PicoKey/Pico OpenPGP CCID support"
+                "Rebuild for Spark ORG trixie; libccid 1.8.4 adds PicoKey/Pico OpenPGP CCID support; lower debhelper compat to 13"
+
+              sed -i -E "s/debhelper-compat \(= 1[0-9]\)/debhelper-compat (= 13)/" debian/control
+              grep -n "debhelper-compat" debian/control
+
+              apt-get build-dep -y .
+              dpkg-checkbuilddeps && echo "build-deps OK"
 
               dpkg-buildpackage -us -uc -sa
 
@@ -129,5 +137,5 @@ jobs:
           gh release create "$TAG" "$TAR" \
             --repo "${{ github.repository }}" \
             --title "libccid ${VER}~spark1 (trixie)" \
-            --notes "Rebuilt from Debian ${VER} for Spark ORG trixie. amd64 / arm64 / armhf. Includes PicoKey (Pico OpenPGP / HSM / FIDO) CCID support from libccid 1.8.x." \
+            --notes "Rebuilt from Debian ${VER} for Spark ORG trixie (debhelper compat lowered to 13). amd64 / arm64 / armhf. Includes PicoKey (Pico OpenPGP / HSM / FIDO) CCID support from libccid 1.8.x." \
           || gh release upload "$TAG" "$TAR" --clobber --repo "${{ github.repository }}"
