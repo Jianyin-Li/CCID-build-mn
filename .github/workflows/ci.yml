@@ -26,6 +26,8 @@ jobs:
           - platform: linux/arm/v7
             arch: armhf
     steps:
+      - uses: actions/checkout@v4
+
       - uses: docker/setup-qemu-action@v3
 
       - name: Build ${{ matrix.arch }}
@@ -46,12 +48,15 @@ jobs:
               mkdir -p /work && cd /work
 
               base=http://deb.debian.org/debian/pool/main/c/ccid
-              up=${V%-}
+              up=${V%-*}
               newv="${V}~spark1"
 
               for f in "ccid_${V}.dsc" "ccid_${up}.orig.tar.xz" "ccid_${V}.debian.tar.xz"; do
-                curl -fsSLO "$base/$f"
+                echo "==> fetching ${base}/${f}"
+                curl -fsSLO "${base}/${f}" || { echo "download failed: ${f}"; exit 1; }
               done
+              ls -l
+
               dpkg-source -x "ccid_${V}.dsc"
 
               cd "ccid-${up}"
@@ -77,7 +82,10 @@ jobs:
         run: |
           set -euo pipefail
           ls -l out
-          for f in out/*.deb; do dpkg-deb -f "$f" Package Version Architecture; done
+          for f in out/*.deb; do
+            echo "--- $f"
+            dpkg-deb -f "$f" Package Version Architecture Depends
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -111,10 +119,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ccid-${{ inputs.version }}-spark1
           TAR: ccid_${{ inputs.version }}~spark1.tar
+          VER: ${{ inputs.version }}
         run: |
           set -euo pipefail
           gh release create "$TAG" "$TAR" \
             --repo "${{ github.repository }}" \
-            --title "libccid ${{ inputs.version }}~spark1 (trixie)" \
-            --notes "Rebuilt from Debian ${VERSION:-${{ inputs.version }}} for Spark ORG trixie. amd64 / arm64 / armhf. PicoKey (Pico OpenPGP/HSM/FIDO) CCID support." \
+            --title "libccid ${VER}~spark1 (trixie)" \
+            --notes "Rebuilt from Debian ${VER} for Spark ORG trixie. amd64 / arm64 / armhf. Includes PicoKey (Pico OpenPGP / HSM / FIDO) CCID support from libccid 1.8.x." \
           || gh release upload "$TAG" "$TAR" --clobber --repo "${{ github.repository }}"
