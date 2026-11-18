@@ -40,13 +40,18 @@ jobs:
             -e V="$V" -e ARCH="${{ matrix.arch }}" \
             -v "$PWD/out:/out" \
             debian:trixie bash -euxo pipefail -c '
-              echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list
-              echo "deb-src http://deb.debian.org/debian trixie main" >> /etc/apt/sources.list
+              printf "%s\n" \
+                "Types: deb deb-src" \
+                "URIs: http://deb.debian.org/debian" \
+                "Suites: trixie" \
+                "Components: main" \
+                > /etc/apt/sources.list.d/debian.sources
+              rm -f /etc/apt/sources.list
 
               apt-get update
               apt-get install -y --no-install-recommends \
                 build-essential dpkg-dev debhelper meson ninja-build \
-                devscripts ca-certificates curl
+                ca-certificates curl
 
               mkdir -p /work && cd /work
 
@@ -65,17 +70,28 @@ jobs:
               dpkg-source -x "ccid_${V}.dsc"
               cd "ccid-${up}"
 
-              export DEBEMAIL="repo@sparkorg.org" DEBFULLNAME="Spark ORG"
-              dch --local "~spark1" -D trixie \
-                "Rebuild for Spark ORG trixie; libccid 1.8.4 adds PicoKey/Pico OpenPGP CCID support; lower debhelper compat to 13"
+              # 手工插入 changelog，版本号完全可控（不用 dch --local，它会追加计数器）
+              {
+                printf "ccid (%s) trixie; urgency=medium\n\n" "$newv"
+                printf "  * Rebuild for Spark ORG trixie (debhelper compat lowered to 13).\n"
+                printf "  * libccid 1.8.4 adds PicoKey / Pico OpenPGP / Pico HSM CCID support.\n\n"
+                printf " -- Spark ORG <repo@sparkorg.org>  %s\n\n" "$(LC_ALL=C date -R)"
+                cat debian/changelog
+              } > /tmp/changelog.new
+              mv /tmp/changelog.new debian/changelog
+              head -8 debian/changelog
 
               sed -i -E "s/debhelper-compat \(= 1[0-9]\)/debhelper-compat (= 13)/" debian/control
               grep -n "debhelper-compat" debian/control
 
               apt-get build-dep -y .
-              dpkg-checkbuilddeps && echo "build-deps OK"
+              dpkg-checkbuilddepcommands 2>/dev/null || dpkg-checkbuilddeps
+              echo "build-deps OK"
 
               dpkg-buildpackage -us -uc -sa
+
+              echo "=== generated files ==="
+              ls -l ..
 
               cp "../libccid_${newv}_${ARCH}.deb" /out/
               if [ "$ARCH" = amd64 ]; then
