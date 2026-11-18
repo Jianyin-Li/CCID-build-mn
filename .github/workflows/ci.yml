@@ -44,14 +44,17 @@ jobs:
               apt-get install -y --no-install-recommends \
                 build-essential debhelper meson ninja-build pkg-config \
                 libusb-1.0-0-dev zlib1g-dev libpcsclite-dev flex perl \
-                devscripts ca-certificates curl
+                devscripts gnupg ca-certificates curl
               mkdir -p /work && cd /work
 
               base=http://deb.debian.org/debian/pool/main/c/ccid
               up=${V%-*}
               newv="${V}~spark1"
 
-              for f in "ccid_${V}.dsc" "ccid_${up}.orig.tar.xz" "ccid_${V}.debian.tar.xz"; do
+              for f in "ccid_${V}.dsc" \
+                       "ccid_${up}.orig.tar.xz" \
+                       "ccid_${up}.orig.tar.xz.asc" \
+                       "ccid_${V}.debian.tar.xz"; do
                 echo "==> fetching ${base}/${f}"
                 curl -fsSLO "${base}/${f}" || { echo "download failed: ${f}"; exit 1; }
               done
@@ -70,6 +73,7 @@ jobs:
               if [ "$ARCH" = amd64 ]; then
                 cp "../ccid_${newv}.dsc" \
                    "../ccid_${up}.orig.tar.xz" \
+                   "../ccid_${up}.orig.tar.xz.asc" \
                    "../ccid_${newv}.debian.tar.xz" \
                    "../ccid_${newv}_${ARCH}.buildinfo" /out/
               fi
