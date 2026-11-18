@@ -1,0 +1,120 @@
+name: build-ccid
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Debian source version, e.g. 1.8.4-1"
+        required: true
+        default: "1.8.4-1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+          - platform: linux/arm/v7
+            arch: armhf
+    steps:
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Build ${{ matrix.arch }}
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm --platform ${{ matrix.platform }} \
+            -e V="$V" -e ARCH="${{ matrix.arch }}" \
+            -v "$PWD/out:/out" \
+            debian:trixie bash -euxo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential debhelper meson ninja-build pkg-config \
+                libusb-1.0-0-dev zlib1g-dev libpcsclite-dev flex perl \
+                devscripts ca-certificates curl
+              mkdir -p /work && cd /work
+
+              base=http://deb.debian.org/debian/pool/main/c/ccid
+              up=${V%-}
+              newv="${V}~spark1"
+
+              for f in "ccid_${V}.dsc" "ccid_${up}.orig.tar.xz" "ccid_${V}.debian.tar.xz"; do
+                curl -fsSLO "$base/$f"
+              done
+              dpkg-source -x "ccid_${V}.dsc"
+
+              cd "ccid-${up}"
+              export DEBEMAIL="repo@sparkorg.org" DEBFULLNAME="Spark ORG"
+              dch --local "~spark1" -D trixie \
+                "Rebuild for Spark ORG trixie; libccid 1.8.4 adds PicoKey/Pico OpenPGP CCID support"
+
+              dpkg-buildpackage -us -uc -sa
+
+              cp "../libccid_${newv}_${ARCH}.deb" /out/
+              if [ "$ARCH" = amd64 ]; then
+                cp "../ccid_${newv}.dsc" \
+                   "../ccid_${up}.orig.tar.xz" \
+                   "../ccid_${newv}.debian.tar.xz" \
+                   "../ccid_${newv}_${ARCH}.buildinfo" /out/
+              fi
+
+              echo "=== /out ==="
+              ls -l /out
+            '
+
+      - name: Sanity check
+        run: |
+          set -euo pipefail
+          ls -l out
+          for f in out/*.deb; do dpkg-deb -f "$f" Package Version Architecture; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ccid-${{ matrix.arch }}
+          path: out/*
+          retention-days: 7
+
+  release:
+    name: pack tar and release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Pack tar
+        run: |
+          set -euo pipefail
+          ls -l dist
+          TAR="ccid_${{ inputs.version }}~spark1.tar"
+          tar -cf "$TAR" -C dist .
+          tar -tvf "$TAR"
+          ls -l "$TAR"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ccid-${{ inputs.version }}-spark1
+          TAR: ccid_${{ inputs.version }}~spark1.tar
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" "$TAR" \
+            --repo "${{ github.repository }}" \
+            --title "libccid ${{ inputs.version }}~spark1 (trixie)" \
+            --notes "Rebuilt from Debian ${VERSION:-${{ inputs.version }}} for Spark ORG trixie. amd64 / arm64 / armhf. PicoKey (Pico OpenPGP/HSM/FIDO) CCID support." \
+          || gh release upload "$TAG" "$TAR" --clobber --repo "${{ github.repository }}"
